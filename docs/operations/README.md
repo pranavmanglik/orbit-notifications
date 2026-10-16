@@ -1,51 +1,45 @@
-# Orbit Notifications: operations and security
+# Operations
 
-This guide organizes runtime behavior documented by the package. It does not certify production readiness. Verify provider/client versions, permissions, transport security, limits, and failure behavior in the target environment before release.
+`NotificationSender` sends one notification to one target. There is no queue, scheduler, retry
+loop, delivery database, or batch API. The application creates the sender, owns when a delivery is
+attempted, and calls `aclose()` when no more sends should be accepted.
 
-## Configuration surface
+## Delivery and retries
 
-Environment names found in the package README:
+A successful `send()` returns a `NotificationReceipt` indicating provider acceptance. Delivery to
+a handset, inbox, or person may happen later or may fail. A timeout can be ambiguous: the provider
+may have accepted the send even though the application did not receive the response. The
+correlation `notification_id` does not guarantee deduplication. Retry an ambiguous request only if
+the adapter documents a provider idempotency mechanism or the application accepts possible
+duplicates.
 
-The package README does not name `ORBIT_*` variables. Use its typed constructors and application configuration, and confirm exact runtime inputs in the implementation before deployment.
+Adapters classify known transient conditions as `NotificationTemporaryError` and known
+non-retryable conditions as `NotificationPermanentError`. This package never retries automatically.
+The application should apply bounded attempts, backoff with jitter, per-target rate limits, and a
+clear dead-letter or operator recovery path where needed. Do not retry permanent validation,
+authorization, or consent failures. Preserve `asyncio.CancelledError` so shutdown and caller
+cancellation remain effective.
 
-Use the package README's constructor and deployment examples. Store credentials in a secret manager and avoid logging credentials, raw provider errors, request data, or opaque cursors.
+## Lifecycle and capacity
 
-## Lifecycle, failure behavior, and limits
+The adapter owns connection pools, SDK clients, and background workers. Use its documented
+timeouts, concurrency limits, quotas, and async lifecycle. Close senders during application
+shutdown and do not share one sender across event loops unless its adapter explicitly supports
+that use. If the application adds a durable queue, define delivery state transitions, duplicate
+handling, queue retention, and poison-message behavior there.
 
-`orbit-notifications` defines a provider-neutral async contract for sending one plain-text
-notification to one channel-specific target. It is a capability package: it includes no SMS, push,
-email provider SDK, queue, or Core dependency. Provider adapters can implement
-`NotificationSender` while owning their SDK, credentials, transport, provider failures, and
-resource lifecycle.
+## Content and channel constraints
 
-The package is pre-alpha and supports Python 3.11–3.14:
+The request accepts one target. Channels are lowercase adapter-defined identifiers; install a
+sender that advertises the requested channel. The package bounds the UTF-8 address to 4,096 bytes,
+correlation ID to 128 bytes, title to 1,024 bytes, and body to 32 KiB. Bodies permit line feeds but
+reject other control characters. These are contract limits, not guarantees that the provider
+accepts every target or message. Respect provider-specific destination formats, segment limits,
+quotas, template rules, and regional restrictions.
 
-```bash
-python -m pip install orbit-notifications
-```
+## Operational checks
 
-## Delivery semantics and security
-
-- One `Notification` contains one recipient, so a send failure has a single-target scope.
-- A returned receipt means the adapter reports provider acceptance. It does not mean a person saw
-  the notification or that a device received it.
-- Send exception strings are fixed generic text; provider diagnostics and addresses should not be
-  passed as exception messages or chained into caller-facing errors.
-- `notification_id` is a caller-supplied correlation value. It is not an idempotency guarantee.
-  Adapters may use provider idempotency keys where supported and must document ambiguous timeouts.
-- The capability does not retry. Callers must not blindly retry an ambiguous send; provider adapters
-  classify known failures as temporary or permanent and must propagate `asyncio.CancelledError`.
-- Titles and bodies are bounded plain text. The package does not render templates, sanitize HTML,
-  resolve preferences or consent, batch targets, queue, schedule, or persist deliveries.
-- The package has no built-in authentication or delivery store. Treat destinations and content as
-  sensitive personal data and apply access control, consent, retention, and redaction at the
-  application and provider boundaries.
-
-`orbit-email` separately defines email message formatting and sender semantics. An email adapter for
-this contract may compose with `orbit_email.EmailSender`, but neither package imports the other and
-no email bridge is included here. Install a channel adapter separately and register its sender
-through Core's dependency container when the application needs that channel.
-
-## Production validation
-
-Validate startup/shutdown cleanup, timeout and cancellation behavior, concurrency and payload bounds where applicable, secret rotation and least-privilege access, data durability, backup/restore, and failover against the selected provider. Do not infer distributed or durable guarantees from an in-process API or fake-client tests.
+Validate connection and send timeouts, cancellation during network calls, provider outages,
+ambiguous acceptance, throttling, credential rotation, shutdown with in-flight requests, duplicate
+handling, and provider quota exhaustion using a dedicated test account. Do not send test
+notifications to real recipients without an approved test target and consent.

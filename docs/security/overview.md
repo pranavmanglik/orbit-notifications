@@ -1,37 +1,39 @@
-# Orbit Notifications: security
+# Security and privacy
 
-## Package-specific security guidance
+## Recipient and message data
 
-## Delivery semantics and security
+Destinations, message bodies, titles, correlation IDs, and provider message IDs may contain
+personal or confidential data. Their fields are hidden from ordinary `repr()` output, but this is
+only a defense against accidental display; it does not redact logging performed by adapters,
+tracing hooks, debuggers, crash dumps, or application code. Do not log complete request or receipt
+objects, addresses, message content, provider responses, or correlation identifiers by default.
 
-- One `Notification` contains one recipient, so a send failure has a single-target scope.
-- A returned receipt means the adapter reports provider acceptance. It does not mean a person saw
-  the notification or that a device received it.
-- Send exception strings are fixed generic text; provider diagnostics and addresses should not be
-  passed as exception messages or chained into caller-facing errors.
-- `notification_id` is a caller-supplied correlation value. It is not an idempotency guarantee.
-  Adapters may use provider idempotency keys where supported and must document ambiguous timeouts.
-- The capability does not retry. Callers must not blindly retry an ambiguous send; provider adapters
-  classify known failures as temporary or permanent and must propagate `asyncio.CancelledError`.
-- Titles and bodies are bounded plain text. The package does not render templates, sanitize HTML,
-  resolve preferences or consent, batch targets, queue, schedule, or persist deliveries.
-- The package has no built-in authentication or delivery store. Treat destinations and content as
-  sensitive personal data and apply access control, consent, retention, and redaction at the
-  application and provider boundaries.
+Apply purpose limitation, consent and preference checks, access control, retention, deletion, and
+regional data requirements in the application and provider integration. This package does not
+make consent decisions or store an audit trail. Review provider retention, support access, data
+residency, and deletion semantics before sending sensitive content.
 
-`orbit-email` separately defines email message formatting and sender semantics. An email adapter for
-this contract may compose with `orbit_email.EmailSender`, but neither package imports the other and
-no email bridge is included here. Install a channel adapter separately and register its sender
-through Core's dependency container when the application needs that channel.
+## Content and transport
 
-## Credentials and sensitive data
+Titles and bodies are bounded plain text. The package does not render templates or sanitize HTML;
+adapters must not silently reinterpret content as markup. Validate channel-specific addresses and
+policy before provider submission. Keep test destinations separate from real recipient lists.
 
-Use least-privilege credentials and a secret manager for provider secrets. Do not commit secrets, tokens, private keys, personal data, request bodies, raw provider errors, or opaque cursors. Enable TLS certificate verification for remote services unless package documentation gives a narrowly scoped local-development exception.
+The selected adapter owns authentication, authorization, TLS, credential storage and rotation,
+network timeouts, and provider-side message handling. Use supported workload identity or a secret
+manager, grant least privilege, verify TLS certificates, and avoid exposing credentials in
+configuration output or diagnostics. Restrict access to queues and delivery receipts if an
+application adds durable delivery state.
 
-## Vulnerability disclosure
+## Safe failures
 
-Follow the repository [security policy](../../SECURITY.md). Do not post vulnerability details in public issues. The policy describes private reporting alternatives without claiming that a hosting-platform setting is enabled.
+The capability's exception messages are fixed and omit destination, content, and raw vendor error
+details. Adapters should preserve this property when translating failures, avoid chaining
+unsanitized provider exceptions, and emit only reviewed bounded diagnostic categories. An
+application may need richer diagnostics, but should store them in access-controlled systems after
+redaction rather than attaching them to caller-facing exceptions.
 
-## Limits
+## Vulnerability reporting
 
-This page records source and package documentation, not an independent security audit. Validate the package, its provider SDKs, and its deployment configuration before production use.
+Use the private process described in the repository [security policy](../../SECURITY.md) to report
+suspected vulnerabilities.

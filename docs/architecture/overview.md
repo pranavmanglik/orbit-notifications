@@ -1,63 +1,44 @@
-# Orbit Notifications: architecture and boundaries
+# Architecture and contract
 
-## Responsibility
+## Package boundary
 
-`orbit-notifications` defines a provider-neutral async contract for sending one plain-text
-notification to one channel-specific target. It is a capability package: it includes no SMS, push,
-email provider SDK, queue, or Core dependency. Provider adapters can implement
-`NotificationSender` while owning their SDK, credentials, transport, provider failures, and
-resource lifecycle.
+`orbit-notifications` is a provider-neutral async capability for sending one plain-text message to
+one target. It defines immutable bounded request and receipt values, a sender protocol, and safe
+retry-classification error types. It does not include provider SDKs, email formatting, templates,
+queues, preferences, consent management, delivery persistence, scheduling, or application
+authentication.
 
-The package is pre-alpha and supports Python 3.11–3.14:
-
-```bash
-python -m pip install orbit-notifications
+```text
+Orbit application → NotificationSender capability → channel adapter → delivery provider
+       │                    │                            ├── owns SDK/client and credentials
+       │                    │                            ├── owns transport and aclose()
+       │                    │                            └── maps provider errors safely
+       └── owns consent, preferences, retries, and delivery policy
 ```
 
-## Declared dependencies
+`orbit-email` separately defines email message formatting and sender semantics. No email bridge is
+included here. An application may adapt an email sender explicitly, but should not assume that
+plain-text notification bodies map safely to provider-specific rich email behavior.
 
-The following dependency declarations come from the checked-in manifests. Optional groups and development dependencies are called out separately.
+## Value and delivery semantics
 
-### `pyproject.toml`
-- No dependencies declared.
-- Optional `dev` group: `pytest>=8,<10`, `pytest-asyncio>=0.24,<2`, `ruff>=0.8,<1`, `mypy>=1.13,<2`, `build>=1.2,<2`.
+- A `NotificationTarget` carries an adapter-defined lowercase channel slug and opaque address.
+- A `Notification` contains one target, a correlation ID, a non-empty plain-text body, and an
+  optional single-line title. UTF-8 byte limits bound identifiers and message content.
+- Targets, message content, IDs, and provider message IDs are omitted from normal representations.
+- A `NotificationReceipt` means the adapter reports provider acceptance only. It is not proof of
+  device delivery, display, or human receipt.
+- `notification_id` is not an idempotency key by itself. Provider idempotency is adapter-specific.
+- Temporary and permanent errors have fixed generic text and no provider-specific exception chain.
 
-Declared dependencies do not mean that optional providers or services are bundled with this package.
+The sender accepts only its declared channel and rejects channel mismatches permanently. It owns
+and closes its provider resources through `aclose()`. The application owns sender lifetime,
+consent, preferences, retry limits, delivery persistence, and the decision to retry ambiguous
+outcomes.
 
-## Implementation layout
+## Dependency direction
 
-Representative implementation files in this checkout:
-
-- `src/orbit_notifications/__init__.py`
-- `src/orbit_notifications/notification.py`
-
-## Public contract and scope
-
-## Contract
-
-```python
-from orbit_notifications import Notification, NotificationSender, NotificationTarget
-
-
-async def deliver(sender: NotificationSender) -> None:
-    message = Notification(
-        notification_id="invoice-2026-1042",
-        target=NotificationTarget(channel="sms", address="+15551234567"),
-        title="Invoice ready",
-        body="Your invoice is ready to view.",
-    )
-    try:
-        receipt = await sender.send(message)
-        print(receipt)
-    finally:
-        await sender.aclose()
-```
-
-The `channel` value is an adapter-defined lowercase identifier. A sender must accept only its
-advertised channel, and reject a mismatch with `NotificationPermanentError`. Destinations, IDs,
-content, and provider message IDs are excluded from representations. Do not log them unless your
-application has an explicit, consent-aware data policy.
-
-## Boundary rules
-
-Keep provider SDKs, credentials, transports, and provider-specific error translation in provider adapters. Keep reusable capability contracts in the matching capability package and lifecycle orchestration in Core. Apply the relevant layer for this repository and preserve the dependency direction shown above.
+Applications depend on the capability and selected channel adapters. Adapters own vendor packages,
+credentials, endpoint settings, transport, provider message identifiers, and error mapping. Keep
+those integrations out of this package so multiple providers can implement the same one-target
+contract.

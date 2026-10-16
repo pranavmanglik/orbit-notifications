@@ -6,7 +6,7 @@ email provider SDK, queue, or Core dependency. Provider adapters can implement
 `NotificationSender` while owning their SDK, credentials, transport, provider failures, and
 resource lifecycle.
 
-The package is pre-alpha and supports Python 3.11–3.14:
+The package is in alpha and supports Python 3.11–3.14:
 
 ```bash
 python -m pip install orbit-notifications
